@@ -28,6 +28,8 @@ LidarKalmanFilter::LidarKalmanFilter() {
     R_ = MatrixXd(2, 2);
     R_ << pow(std_laspx_, 2), 0,
           0, pow(std_laspy_, 2);
+
+    sensorType_ = MeasurementPackage::LASER;
 }
 
 bool LidarKalmanFilter::IsProcessible(const MeasurementPackage &measurement_pack) {

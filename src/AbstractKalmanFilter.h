@@ -12,6 +12,7 @@ using namespace std;
 
 class AbstractKalmanFilter {
 public:
+    MeasurementPackage::SensorType sensorType_;
 
     // measurement matrix
     Eigen::MatrixXd H_;
@@ -61,6 +62,8 @@ public:
     // NIS inside  borders
     int total_inside;
 
+    double eps_;
+
 
     /**
      * Constructor
@@ -91,11 +94,13 @@ protected:
 
     VectorXd CalculateTransition(VectorXd sigma_point, double dt);
 
-    VectorXd ComputeMean(MatrixXd sig, int dimensions);
+    VectorXd ComputeMean(MatrixXd sig);
 
-    MatrixXd ComputeCovariance(MatrixXd sig, VectorXd mean, int angle_index, int dimensions);
+    MatrixXd ComputeCovariance(MatrixXd sig, VectorXd mean, int angle_index);
 
     void UpdateNisStatistics();
+
+    double NormalizeAngle(double angle) const;
 };
 
 #endif //EXTENDEDKF_ABSTRACTKALMANFILTER_H

@@ -16,10 +16,10 @@ AbstractKalmanFilter::AbstractKalmanFilter() {
     n_aug_ = 7;
 
     // Sigma point spreading parameter
-    lambda_ = 3 - n_x_;
+    lambda_ = 3 - n_aug_;
 
     // Process noise standard deviation longitudinal acceleration in m/s^2
-    std_a_ = 0.25;
+    std_a_ = 0.5;
 
     // Process noise standard deviation yaw acceleration in rad/s^2
     std_yawdd_ = 0.5;
@@ -34,6 +34,8 @@ AbstractKalmanFilter::AbstractKalmanFilter() {
         double weight = 0.5 / (n_aug_ + lambda_);
         weights_(i) = weight;
     }
+
+    eps_ = 0.001;
 
     //NIS routine initialization
 
@@ -66,6 +68,8 @@ void AbstractKalmanFilter::ProcessMeasurement(FilterState &state, const Measurem
     Update(state, measurement_pack.raw_measurements_);
 
     UpdateNisStatistics();
+
+    //cout << "x = " << state.x_ << endl;
 }
 
 void AbstractKalmanFilter::UpdateNisStatistics() {
@@ -80,10 +84,10 @@ void AbstractKalmanFilter::UpdateNisStatistics() {
     if(NIS_ <= NIS_top && NIS_ >= NIS_bot)
         total_inside++;
 
-    cout << "NIS inside = " << 100 * total_inside / total_measurements << "%" << endl;
-    cout << "NIS above bottom = " << 100 * total_above_bot / total_measurements << "%" << endl;
-    cout << "NIS above top = " << 100 * total_above_top / total_measurements << "%" << endl;
-    cout << "NIS = " << NIS_ << endl;
+    cout << sensorType_ << " NIS inside = " << 100 * total_inside / total_measurements << "%" << endl;
+    cout << sensorType_ << " NIS above bottom = " << 100 * total_above_bot / total_measurements << "%" << endl;
+    cout << sensorType_ << " NIS above top = " << 100 * total_above_top / total_measurements << "%" << endl;
+    cout << sensorType_ << " NIS = " << NIS_ << endl;
 }
 
 void AbstractKalmanFilter::Init(FilterState &state, const MeasurementPackage &measurement_pack) {
@@ -99,11 +103,11 @@ void AbstractKalmanFilter::Predict(FilterState &state, const float dt) {
     // Use the prediction function to predict the k+1 values for these sigma points
     Xsig_pred_ = PredictSigmaPoints(Xsig_aug, dt);
 
-    // Use predicted sigma points to compute new mean
-    state.x_ << ComputeMean(Xsig_pred_, n_x_);
+     // Use predicted sigma points to compute new mean
+    state.x_ << ComputeMean(Xsig_pred_);
 
     // Use predicted sigma points to compute covariance matrix
-    state.P_ << ComputeCovariance(Xsig_pred_, state.x_, 3, n_x_);
+    state.P_ << ComputeCovariance(Xsig_pred_, state.x_, 3);
 }
 
 MatrixXd AbstractKalmanFilter::GenerateSigmaPoints(FilterState &state) {
@@ -165,15 +169,7 @@ VectorXd AbstractKalmanFilter::CalculateTransition(VectorXd sigma_point, double 
     double long_acceleration = sigma_point(5);
     double yaw_rate_acceleration = sigma_point(6);
 
-    VectorXd process_noise(n_x_);
-
-    process_noise(0) = (1 / 2.0 * dt * dt * cos(psi) * long_acceleration);
-    process_noise(1) = (1 / 2.0 * dt * dt * sin(psi) * long_acceleration);
-    process_noise(2) = (long_acceleration * dt);
-    process_noise(3) = (1 / 2.0 * dt * dt * yaw_rate_acceleration);
-    process_noise(4) = (yaw_rate_acceleration * dt);
-
-    if (psi_dot != 0) {
+    if (fabs(psi_dot) > eps_) {
         transition(0) = (v / (float) psi_dot * (sin(psi + psi_dot * dt) - sin(psi)));
         transition(1) = (v / (float) psi_dot * (-cos(psi + psi_dot * dt) + cos(psi)));
         transition(2) = 0;
@@ -187,23 +183,32 @@ VectorXd AbstractKalmanFilter::CalculateTransition(VectorXd sigma_point, double 
         transition(4) = 0;
     }
 
+    VectorXd process_noise(n_x_);
+    process_noise(0) = (1 / 2.0 * dt * dt * cos(psi) * long_acceleration);
+    process_noise(1) = (1 / 2.0 * dt * dt * sin(psi) * long_acceleration);
+    process_noise(2) = (long_acceleration * dt);
+    process_noise(3) = (1 / 2.0 * dt * dt * yaw_rate_acceleration);
+    process_noise(4) = (yaw_rate_acceleration * dt);
+
+
     return transition + process_noise;
 }
 
-VectorXd AbstractKalmanFilter::ComputeMean(MatrixXd sigma_points, int dimensions) {
+VectorXd AbstractKalmanFilter::ComputeMean(MatrixXd sigma_points) {
     //Calculate mean from sigma points
-    VectorXd mean = VectorXd(dimensions);
+    VectorXd mean = VectorXd(sigma_points.rows());
     //predicted state mean
     mean.fill(0.0);
     for (int i = 0; i < 2 * n_aug_ + 1; i++) { //iterate over sigma points
         mean = mean + weights_(i) * sigma_points.col(i);
     }
+
     return mean;
 }
 
-MatrixXd AbstractKalmanFilter::ComputeCovariance(MatrixXd sigma_points, VectorXd mean, int angle_index, int dimensions) {
+MatrixXd AbstractKalmanFilter::ComputeCovariance(MatrixXd sigma_points, VectorXd mean, int angle_index) {
     //Calculate covariance matrix from sigma points
-    MatrixXd P = MatrixXd(dimensions, dimensions);
+MatrixXd P = MatrixXd(sigma_points.rows(), sigma_points.rows());
 
     P.fill(0.0);
     for (int i = 0; i < 2 * n_aug_ + 1; i++) { //iterate over sigma points
@@ -211,11 +216,16 @@ MatrixXd AbstractKalmanFilter::ComputeCovariance(MatrixXd sigma_points, VectorXd
         VectorXd diff = sigma_points.col(i) - mean;
         //angle normalization
         if(angle_index >= 0) {
-            while (diff(angle_index) > M_PI) diff(angle_index) -= 2. * M_PI;
-            while (diff(angle_index) < -M_PI) diff(angle_index) += 2. * M_PI;
+            diff(angle_index) = NormalizeAngle(diff(angle_index));
         }
 
         P = P + weights_(i) * diff * diff.transpose();
     }
     return P;
+}
+
+double AbstractKalmanFilter::NormalizeAngle(double angle) const {
+    while (angle > M_PI) angle -= 2. * M_PI;
+    while (angle < -M_PI) angle += 2. * M_PI;
+    return angle;
 }

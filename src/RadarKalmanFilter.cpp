@@ -5,6 +5,7 @@
 using namespace std;
 using Eigen::MatrixXd;
 
+
 RadarKalmanFilter::~RadarKalmanFilter() {}
 
 RadarKalmanFilter::RadarKalmanFilter() {
@@ -29,17 +30,17 @@ RadarKalmanFilter::RadarKalmanFilter() {
 
     NIS_bot = 0.35;
 
-    eps = 0.000001;
+    sensorType_ = MeasurementPackage::RADAR;
 }
 
 void RadarKalmanFilter::Update(FilterState &state, const VectorXd &z) {
     MatrixXd Zsig = TransformSigmaPointsToMeasurementSpace();
 
     //mean predicted measurement
-    VectorXd z_pred = ComputeMean(Zsig, n_z_);
+    VectorXd z_pred = ComputeMean(Zsig);
 
     //measurement covariance matrix S
-    MatrixXd S = ComputeCovariance(Zsig, z_pred, 1, n_z_);
+    MatrixXd S = ComputeCovariance(Zsig, z_pred, 1);
 
     //add measurement noise covariance matrix
     S = S + R_;
@@ -54,14 +55,13 @@ void RadarKalmanFilter::Update(FilterState &state, const VectorXd &z) {
     VectorXd z_diff = z - z_pred;
 
     //angle normalization
-    while (z_diff(1)> M_PI) z_diff(1)-=2.*M_PI;
-    while (z_diff(1)<-M_PI) z_diff(1)+=2.*M_PI;
+    z_diff(1) = NormalizeAngle(z_diff(1));
 
     //update state mean and covariance matrix
     state.x_ = state.x_ + K * z_diff;
     state.P_ = state.P_ - K*S*K.transpose();
 
-    NIS_ = z_diff.transpose() * S.transpose() * z_diff;
+    NIS_ = z_diff.transpose() * S.inverse() * z_diff;
 }
 
 MatrixXd RadarKalmanFilter::CalculateCrossCorrelation(const FilterState &state, MatrixXd &Zsig, const VectorXd &z_pred) const {//create matrix for cross correlation Tc
@@ -74,14 +74,12 @@ MatrixXd RadarKalmanFilter::CalculateCrossCorrelation(const FilterState &state, 
         //residual
         VectorXd z_diff = Zsig.col(i) - z_pred;
         //angle normalization
-        while (z_diff(1)> M_PI) z_diff(1)-=2.*M_PI;
-        while (z_diff(1)<-M_PI) z_diff(1)+=2.*M_PI;
+        z_diff(1) = NormalizeAngle(z_diff(1));
 
         // state difference
         VectorXd x_diff = Xsig_pred_.col(i) - state.x_;
         //angle normalization
-        while (x_diff(3)> M_PI) x_diff(3)-=2.*M_PI;
-        while (x_diff(3)<-M_PI) x_diff(3)+=2.*M_PI;
+        x_diff(3) = NormalizeAngle(x_diff(3));
 
         Tc = Tc + weights_(i) * x_diff * z_diff.transpose();
     }
@@ -102,6 +100,16 @@ MatrixXd RadarKalmanFilter::TransformSigmaPointsToMeasurementSpace() const {//cr
 
         double v1 = cos(yaw)*v;
         double v2 = sin(yaw)*v;
+
+        // Make sure we don't divide by 0.
+        if (fabs(p_x) < eps_ && fabs(p_y) < eps_) {
+            p_x = eps_;
+            p_y = eps_;
+        } else if (fabs(p_x) < eps_) {
+            p_x = eps_;
+        } else if (fabs(p_y) < eps_) {
+            p_y = eps_;
+        }
 
         // measurement model
         Zsig(0,i) = sqrt(p_x*p_x + p_y*p_y);                        //r
